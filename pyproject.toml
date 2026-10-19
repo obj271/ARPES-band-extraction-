@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arpes-band-extraction"
+version = "0.1.0"
+description = "ARPES band extraction with Gaussian nearest-neighbor priors and exact chain MAP inference"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24,<3", "scipy>=1.10,<2", "matplotlib>=3.7,<4"]
+
+[project.scripts]
+arpes-map = "arpes_map.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["arpes_map*"]
