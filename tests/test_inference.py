@@ -40,10 +40,19 @@ class ChainTests(unittest.TestCase):
 
 class ExtractionTests(unittest.TestCase):
     def setUp(self):
-        self.data = simulate(ne=96, nk=50)
+        self.data = simulate(ne=96, nk=50, missing=True)
 
     def extract(self, **kwargs):
         return extract_band(self.data["intensity"], self.data["energy"], self.data["momentum"], **kwargs)
+
+    def test_synthetic_data_is_complete_by_default(self):
+        complete = simulate(ne=96, nk=50)
+        self.assertTrue(np.all(np.ptp(complete["intensity"], axis=0) > 0))
+        observed = np.ptp(self.data["intensity"], axis=0) > 0
+        np.testing.assert_array_equal(complete["intensity"][:, observed],
+                                      self.data["intensity"][:, observed])
+        for name in ("clean", "energy", "momentum", "truth"):
+            np.testing.assert_array_equal(complete[name], self.data[name])
 
     def test_synthetic_recovery_and_missing_evidence(self):
         result = self.extract()

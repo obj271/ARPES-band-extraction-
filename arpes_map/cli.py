@@ -7,18 +7,21 @@ import sys
 
 import numpy as np
 
+from .enhancement import comparison_intensities
 from .inference import extract_band, validate_data
 from .synthetic import simulate
 
 
-def _plot(output, data, result):
+def _plot(output, data, result, comparisons, comparison_bands):
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     k, e = data["momentum"], data["energy"]
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), constrained_layout=True)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9.2), constrained_layout=True,
+                             sharex=True, sharey=True)
+    axes = axes.ravel()
     for ax in axes:
         ax.set(xlabel=r"Momentum ($\mathrm{\AA}^{-1}$)", ylabel="Energy - EF (eV)")
     image = axes[0].pcolormesh(k, e, data["intensity"], shading="auto", cmap="magma")
@@ -38,13 +41,63 @@ def _plot(output, data, result):
                      color="orange", label="No local energy contrast")
     axes[1].set_title("Posterior conditional on the chosen model")
     axes[1].legend(loc="lower left", fontsize=8)
+    for ax, key, title in zip(axes[2:], ("curvature_intensity", "gradient_intensity"),
+                              ("2D curvature intensity", "Minimum-gradient intensity")):
+        image = ax.pcolormesh(k, e, comparisons[key], shading="auto", cmap="magma", vmin=0, vmax=1)
+        fig.colorbar(image, ax=ax, label="Normalized enhanced intensity (a.u.)")
+        ax.plot(k, result.band_energy, color="cyan", lw=1, label="Joint MAP")
+        if "truth" in data:
+            ax.plot(k, data["truth"], "w--", lw=1, label="Simulation truth")
+        ax.set_title(title)
+        ax.legend(loc="lower left", fontsize=8)
     fig.savefig(output / "extraction.png", dpi=170)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6.8, 5.2), constrained_layout=True)
+    image = ax.pcolormesh(k, e, data["intensity"], shading="auto", cmap="magma")
+    fig.colorbar(image, ax=ax, label="Linear intensity (a.u.)")
+    ax.set(xlabel=r"Momentum ($\mathrm{\AA}^{-1}$)", ylabel="Energy - EF (eV)",
+           title="Simulated intensity")
+    fig.savefig(output / "intensity.png", dpi=200)
+    plt.close(fig)
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.4), constrained_layout=True,
+                             sharex=True, sharey=True)
+    methods = (
+        ("Gaussian-prior MAP", data["intensity"], result.band_energy, "Joint MAP"),
+        ("2D curvature", comparisons["curvature_intensity"],
+         comparison_bands["curvature_band_energy"], "Column maximum"),
+        ("Minimum gradient", comparisons["gradient_intensity"],
+         comparison_bands["gradient_band_energy"], "Column maximum"),
+    )
+    for ax, (title, values, band, label) in zip(axes, methods):
+        image = ax.pcolormesh(k, e, values, shading="auto", cmap="magma")
+        fig.colorbar(image, ax=ax, label="Intensity (a.u.)")
+        ax.plot(k, band, color="cyan", lw=1.2, label=label)
+        if "truth" in data:
+            ax.plot(k, data["truth"], "w--", lw=1.2, label="Simulation truth")
+            error = band[result.observed] - data["truth"][result.observed]
+            title += f"\nObserved-column RMSE: {1000 * np.sqrt(np.mean(error**2)):.2f} meV"
+        ax.set(xlabel=r"Momentum ($\mathrm{\AA}^{-1}$)", title=title)
+        ax.legend(loc="lower left", fontsize=8)
+    axes[0].set_ylabel("Energy - EF (eV)")
+    fig.suptitle("Band extraction comparison: MAP and column maxima of enhanced intensities")
+    fig.savefig(output / "band_comparison.png", dpi=200)
     plt.close(fig)
 
 
 def _save(output, data, result, config):
     output.mkdir(parents=True, exist_ok=True)
+    comparisons = comparison_intensities(data["intensity"], data["energy"], data["momentum"],
+                                         smoothing=config["smoothing"])
+    comparison_bands = {
+        name + "_band_energy": np.where(
+            result.observed, data["energy"][np.argmax(comparisons[name + "_intensity"], axis=0)], np.nan)
+        for name in ("curvature", "gradient")
+    }
     arrays = dict(data)
+    arrays.update(comparisons)
+    arrays.update(comparison_bands)
     arrays.update(
         band_energy=result.band_energy,
         band_indices=result.band_indices,
@@ -70,6 +123,15 @@ def _save(output, data, result, config):
         featureless_columns=int(np.sum(~result.observed)),
         negative_log_posterior_up_to_constants=result.negative_log_posterior,
         interval_note="Pointwise model-conditional marginal intervals; not calibrated experimental errors.",
+        intensity_comparison=dict(
+            curvature="Positive part of negative 2D curvature; Cx=Cy=1",
+            gradient="Smoothed intensity / RMS of eight neighbor directional differences",
+            coordinates="Input axes divided by their median spacing (pixel-equivalent units)",
+            smoothing_pixels=list(config["smoothing"]),
+            gradient_floor_relative=1e-3,
+            normalization="Each map globally peak-normalized to [0, 1]; featureless columns set to zero",
+            band_extraction="Column-wise global maximum of each enhanced map; no continuity prior",
+        ),
     )
     if "truth" in data:
         truth = data["truth"]
@@ -81,8 +143,12 @@ def _save(output, data, result, config):
             raw_argmax_observed_rmse_mev=float(1000 * np.sqrt(np.mean(
                 (baseline[result.observed] - truth[result.observed]) ** 2))),
         )
+        for name, band in comparison_bands.items():
+            error = band[result.observed] - truth[result.observed]
+            summary["simulation_metrics"][name.replace("_band_energy", "_observed_rmse_mev")] = float(
+                1000 * np.sqrt(np.mean(error**2)))
     (output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False), encoding="utf-8")
-    _plot(output, data, result)
+    _plot(output, data, result, comparisons, comparison_bands)
     return summary
 
 
@@ -113,9 +179,16 @@ def _parser():
         if name == "demo":
             sub.add_argument("--seed", type=int, default=42)
             sub.add_argument("--peak-counts", type=float, default=12)
+            sub.add_argument("--gamma-ev", type=float, default=0.009,
+                             help="Intrinsic Lorentzian half width at half maximum in eV")
             sub.add_argument("--energy-points", type=int, default=192)
             sub.add_argument("--momentum-points", type=int, default=100)
-            sub.add_argument("--no-dropout", action="store_true")
+            dropout = sub.add_mutually_exclusive_group()
+            dropout.add_argument("--dropout", action="store_true",
+                                 help="Simulate four missing detector columns near k=0 (default: no dropout)")
+            dropout.add_argument("--no-dropout", dest="dropout", action="store_false",
+                                 help="Generate complete data (the default)")
+            sub.set_defaults(dropout=False)
         else:
             sub.add_argument("--input", type=Path, required=True)
             sub.add_argument("--energy-window", type=float, nargs=2, metavar=("MIN_EV", "MAX_EV"))
@@ -137,7 +210,7 @@ def main(argv=None):
     try:
         if args.command == "demo":
             data = simulate(seed=args.seed, ne=args.energy_points, nk=args.momentum_points,
-                            peak_counts=args.peak_counts, missing=not args.no_dropout)
+                            peak_counts=args.peak_counts, missing=args.dropout, gamma_ev=args.gamma_ev)
         else:
             data = _load(args.input)
             if args.energy_window:
@@ -166,7 +239,8 @@ def main(argv=None):
             data["reference_energy"] = reference
         config.update(command=args.command, reference=str(args.reference) if args.reference else None)
         if args.command == "demo":
-            config.update(seed=args.seed, peak_counts=args.peak_counts, missing=not args.no_dropout)
+            config.update(seed=args.seed, peak_counts=args.peak_counts, missing=args.dropout,
+                          gamma_ev=args.gamma_ev)
         else:
             config.update(input=str(args.input), energy_window=args.energy_window)
         summary = _save(args.output, data, result, config)

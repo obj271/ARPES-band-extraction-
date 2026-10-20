@@ -18,7 +18,23 @@ python -m arpes_map demo --output outputs/demo
 
 也可 `python -m pip install -r requirements.txt` 后在仓库根目录运行模块。安装项目后可使用等价命令 `arpes-map demo`。
 
-模拟包含 Lorentzian 峰、费米占据、仪器展宽、动量相关强度、Poisson 计数噪声以及四列探测器缺失。真值仅用于评估和绘图，不传入提取器。默认种子 42，能量/动量采样数 192/100，峰值期望计数 12。`summary.json` 报告 MAP RMSE、有效列 RMSE 和相同有效列上的原始逐列 argmax 基线，单位 meV。
+模拟包含 Lorentzian 峰、费米占据、仪器展宽、动量相关强度和 Poisson 计数噪声。默认生成完整数据，不在动量 0.0 附近人为制造缺失。添加 `--dropout` 可将中心四列强度置零，用于验证探测器缺失时的恢复：
+
+```bash
+python -m arpes_map demo --dropout --output outputs/dropout
+```
+
+Python 接口同样默认生成完整数据，使用 `simulate(missing=True)` 启用缺失；原有 `--no-dropout` 选项仍可使用。真值仅用于评估和绘图，不传入提取器。默认种子 42，能量/动量采样数 192/100，峰值期望计数 12。`summary.json` 报告 MAP RMSE、有效列 RMSE 和相同有效列上的原始逐列 argmax 基线，单位 meV。
+
+生成展宽更大、噪声更小的另一版强度图：
+
+```bash
+python -m arpes_map demo --gamma-ev 0.027 --peak-counts 1200 --output outputs/broadened_low_noise
+```
+
+`--gamma-ev` 为本征 Lorentzian 半高半宽（HWHM），默认 0.009 eV；上例增大到 0.027 eV（本征 FWHM 为 54 meV），仪器 Gaussian 展宽保持原值。峰值期望计数从 12 提高到 1200，使相同相对强度处的 Poisson 相对噪声约降至原来的十分之一。Python 接口可使用 `simulate(gamma_ev=0.027, peak_counts=1200)`；模拟参数保存于 `summary.json`。
+
+已保存的示例：[模拟强度图](outputs/broadened_low_noise/intensity.png)、[三种方法提取对比](outputs/broadened_low_noise/band_comparison.png)、[误差与参数](outputs/broadened_low_noise/summary.json)及[完整数据](outputs/broadened_low_noise/result.npz)。
 
 ## 分析自己的数据
 
@@ -96,21 +112,35 @@ z_MAP = argmin_z { -Σ_j log L_j(z_j)
 
 | 文件 | 内容 |
 | --- | --- |
-| `extraction.png` | 强度叠加 MAP；边缘后验及逐点中央 68% 区间 |
+| `extraction.png` | 四幅对比图：原始强度叠加 MAP、边缘后验及逐点中央 68% 区间、二维曲率强度、最小梯度强度 |
+| `intensity.png` | 独立的原始强度图，不叠加提取曲线 |
+| `band_comparison.png` | 三种提取结果并排对比：MAP、曲率增强图逐列峰值、最小梯度增强图逐列峰值；模拟时显示真值和有效列 RMSE |
 | `band.csv` | 动量、MAP 能量、后验均值、区间上下界、有效列标记 |
-| `result.npz` | 输入坐标及强度、似然、MAP 索引/能量、边缘后验、均值/区间、有效列标记 |
-| `summary.json` | 推断参数、输入来源或模拟种子、形状、目标函数值；模拟时另含误差指标 |
+| `result.npz` | 输入坐标及强度、`curvature_intensity`、`gradient_intensity`、似然、MAP 索引/能量、边缘后验、均值/区间、有效列标记 |
+| `summary.json` | 推断参数、输入来源或模拟种子、形状、目标函数值、强度对比方法及归一化设置；模拟时另含误差指标 |
 
 同一输出目录中同名文件会覆盖。输出能量保持 eV；模拟 RMSE 使用 meV。默认演示的 `result.npz` 另含 `truth` 和 `clean`，可复查。可选参考曲线保存为 `reference_energy`。
+
+`result.npz` 还保存 `curvature_band_energy` 和 `gradient_band_energy`。这两条曲线分别取对应增强图各动量列的全局峰值，无能量对比度的列记为 NaN；未使用 MAP 连续性先验。`summary.json` 记录其有效列 RMSE。逐列峰值可能选中噪声或背景，尤其是最小梯度图；三栏图保留这些结果以便直接比较。
+
+两种对比强度均为与原始 `intensity` 同形状的二维数组，`demo` 和 `extract` 默认生成。它们使用全图峰值缩放后的输入和相同的 `--smooth-energy` / `--smooth-momentum` Gaussian 滤波，在 MAP 背景扣除之前计算。导数坐标为 `x=(k-k[0])/median(Δk)`、`y=(E-E[0])/median(ΔE)`，以像素等效单位平衡两个方向，并保留非均匀采样间距。
+
+- **曲率强度**：采用 [Zhang et al. 的二维曲率公式](https://arxiv.org/abs/1104.1524)，固定 `Cx=Cy=1`。对滤波强度 `f` 计算 `C=((1+fx²)fyy - 2 fx fy fxy + (1+fy²)fxx)/(1+fx²+fy²)^(3/2)`，取 `max(-C, 0)`，使峰脊显示为亮色。
+- **梯度强度**：采用 [He et al. 的最小梯度法](https://arxiv.org/abs/1612.07880)。在每个像素的八邻域，按坐标距离计算方向差商并取 RMS 模长 `G`，输出 `f/max(G, ε)`，其中 `ε=max(1e-3 × max(G), machine_epsilon)`；边界仅使用存在的邻居。均匀网格内部的 RMS 与论文八方向模长相差固定倍数，在最终归一化时消除。
+
+两幅增强图分别在全图归一化到 `[0, 1]`，全零结果保留为零；无能量对比度的原始列置零。色条表示各自的相对增强强度，不能用于比较绝对光电子计数。图中叠加同一条 MAP 曲线，模拟时另叠加真值，便于检查增强峰脊的位置；增强图仅作为输出对比，不参与 MAP 推断。
 
 ## Python 接口
 
 ```python
-from arpes_map import extract_band
+from arpes_map import comparison_intensities, extract_band
 
 result = extract_band(intensity_2d, energy_ev, momentum_inv_angstrom, eta_ev=0.012)
 band = result.band_energy
 posterior = result.marginals
+comparison = comparison_intensities(intensity_2d, energy_ev, momentum_inv_angstrom)
+curvature = comparison["curvature_intensity"]
+gradient = comparison["gradient_intensity"]
 ```
 
 ## 验证
@@ -119,9 +149,9 @@ posterior = result.marginals
 python -m unittest discover -s tests -v
 ```
 
-测试以小链穷举的 MAP 和精确边缘概率验证两套推断算法，并检查先验强弱极限、模拟恢复、缺失列、强度单位不变性、目标带约束、非法输入和 CLI 导出/重新导入。GitHub Actions 在 Python 3.10/3.12 上配置相同测试及演示。
+测试以小链穷举的 MAP 和精确边缘概率验证两套推断算法，并检查先验强弱极限、模拟恢复、缺失列、强度单位不变性、目标带约束、非法输入和 CLI 导出/重新导入。强度对比另验证解析曲面的曲率、非均匀网格八邻域梯度、峰位置、缺失列及滤波参数。GitHub Actions 在 Python 3.10/3.12 上配置相同测试及演示。
 
-本次本地验证使用 Python 3.12.10、NumPy 2.5.4、SciPy 1.18.1、Matplotlib 3.11.2，9 项测试全部通过。默认模拟的 MAP 全列 RMSE 为 **2.525 meV**；相同有效列上 MAP 为 **2.547 meV**，原始逐列 argmax 为 **34.799 meV**。这是一组固定种子的合成数据结果，不是实验性能或跨数据集基准；不表示达到相应实验分辨率。
+本次本地验证使用 Python 3.14.2、NumPy 2.5.4、SciPy 1.18.1、Matplotlib 3.11.2，16 项测试全部通过。默认完整模拟的 MAP 全列及有效列 RMSE 均为 **2.569 meV**，原始逐列 argmax 为 **34.101 meV**。这是一组固定种子的合成数据结果，不是实验性能或跨数据集基准；不表示达到相应实验分辨率。
 
 ## 解释范围与文献
 
