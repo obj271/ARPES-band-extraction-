@@ -4,5 +4,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-outputs/
+# Keep the consolidated example; ignore alternate run directories.
+outputs/*
+!outputs/map_result.png
+!outputs/band_comparison.png
+!outputs/band.csv
+!outputs/result.npz
+!outputs/summary.json
+!outputs/metrics.csv
 .pytest_cache/

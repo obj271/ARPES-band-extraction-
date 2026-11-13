@@ -100,6 +100,7 @@ def extract_band(
     reference_sigma_ev=0.04,
     anchors=(),
     anchor_sigma_ev=0.008,
+    candidate_mask=None,
 ):
     """Extract one dominant band from I[energy, momentum].
 
@@ -108,6 +109,7 @@ def extract_band(
     energy standard deviation at the median momentum spacing; irregular steps
     scale sigma_j by sqrt(delta_k_j / median(delta_k)). Smoothing is in pixels.
     Anchors are (integer momentum-column index, energy in eV) pairs.
+    candidate_mask optionally restricts allowed energy states at every column.
     """
     intensity, energy, momentum = validate_data(intensity, energy, momentum)
     eta_ev = _positive(eta_ev, "eta_ev")
@@ -150,6 +152,11 @@ def extract_band(
         if not energy[0] <= value <= energy[-1]:
             raise ValueError("anchor energy is outside the measured energy range")
         unary[:, column] += 0.5 * ((energy - value) / anchor_sigma_ev) ** 2
+    if candidate_mask is not None:
+        candidate_mask = np.asarray(candidate_mask, dtype=bool)
+        if candidate_mask.shape != intensity.shape or not np.all(candidate_mask.any(axis=0)):
+            raise ValueError("candidate_mask must match intensity and allow at least one state per column")
+        unary = np.where(candidate_mask, unary, np.inf)
     dk = np.diff(momentum)
     sigmas = eta_ev * np.sqrt(dk / np.median(dk))
     indices, optimum, marginals = _chain_inference(unary, energy, sigmas)
@@ -166,4 +173,58 @@ def extract_band(
         upper_energy=upper,
         observed=observed,
         negative_log_posterior=optimum,
+    )
+
+
+def band_search_masks(energy, initial_guess):
+    """Partition energy states at the midpoints of ordered approximate bands.
+
+    initial_guess has shape (n_bands, n_momentum). The bands must stay strictly
+    ordered from low to high energy; crossing-band identity is not inferred.
+    These masks depend only on the supplied guesses, never on simulation truth.
+    """
+    energy = np.asarray(energy, dtype=float)
+    guess = np.asarray(initial_guess, dtype=float)
+    if (energy.ndim != 1 or energy.size < 2 or not np.all(np.isfinite(energy))
+            or np.any(np.diff(energy) <= 0)):
+        raise ValueError("energy must be finite and strictly increasing")
+    if guess.ndim != 2 or min(guess.shape) < 1 or not np.all(np.isfinite(guess)):
+        raise ValueError("initial_guess must be finite with shape (n_bands, n_momentum)")
+    if np.any(np.diff(guess, axis=0) <= 0):
+        raise ValueError("initial_guess bands must stay strictly ordered from low to high energy; crossings unsupported")
+    if np.any((guess < energy[0]) | (guess > energy[-1])):
+        raise ValueError("initial_guess must lie inside the selected energy range")
+    boundaries = 0.5 * (guess[:-1] + guess[1:])
+    lower = np.concatenate((np.full((1, guess.shape[1]), -np.inf), boundaries))
+    upper = np.concatenate((boundaries, np.full((1, guess.shape[1]), np.inf)))
+    masks = ((energy[None, :, None] >= lower[:, None, :])
+             & (energy[None, :, None] < upper[:, None, :]))
+    if not np.all(masks.any(axis=1)):
+        raise ValueError("energy grid is too coarse to give every band a candidate at every momentum")
+    return masks
+
+
+def extract_bands(intensity, energy, momentum, *, initial_guess, anchors=(), **kwargs):
+    """Extract ordered bands using biased references and disjoint search regions.
+
+    Returns a tuple of ExtractionResult, ordered from low to high energy. Each
+    band is an exact chain solution conditional on its reference and midpoint
+    region, not an unconstrained joint multiband fit. anchors are zero-based
+    (band_index, momentum_column, energy_ev) triples. kwargs go to extract_band.
+    """
+    intensity, energy, momentum = validate_data(intensity, energy, momentum)
+    guess = np.asarray(initial_guess, dtype=float)
+    masks = band_search_masks(energy, guess)
+    if guess.shape[1] != momentum.size:
+        raise ValueError("initial_guess must contain one energy per momentum point for each band")
+    band_anchors = [[] for _ in guess]
+    for band, column, value in anchors:
+        if (isinstance(band, (bool, np.bool_)) or not isinstance(band, (int, np.integer))
+                or not 0 <= band < len(guess)):
+            raise ValueError("anchor band index is out of range or is not an integer")
+        band_anchors[band].append((column, value))
+    return tuple(
+        extract_band(intensity, energy, momentum, reference=reference,
+                     candidate_mask=mask, anchors=selected_anchors, **kwargs)
+        for reference, mask, selected_anchors in zip(guess, masks, band_anchors)
     )

@@ -4,8 +4,8 @@ import unittest
 import numpy as np
 from scipy.special import logsumexp
 
-from arpes_map.inference import _chain_inference, extract_band
-from arpes_map.synthetic import simulate
+from arpes_map.inference import _chain_inference, band_search_masks, extract_band, extract_bands
+from arpes_map.synthetic import approximate_dispersion, simulate
 
 
 class ChainTests(unittest.TestCase):
@@ -36,6 +36,24 @@ class ChainTests(unittest.TestCase):
         np.testing.assert_array_equal(indices, [0, 0, 1])
         indices, _, _ = _chain_inference(unary, energy, np.full(2, 0.001))
         np.testing.assert_array_equal(indices, [0, 0, 0])
+
+    def test_masked_states_match_exhaustive_enumeration(self):
+        energy = np.array([-0.3, -0.15, -0.02])
+        unary = np.array([[0., np.inf, 2.], [1., 0., np.inf], [np.inf, 2., 0.]])
+        sigmas = np.array([0.12, 0.08])
+        paths = np.array(list(itertools.product(range(3), repeat=3)))
+        costs = np.array([
+            sum(unary[path[j], j] for j in range(3))
+            + np.sum(0.5 * (np.diff(energy[path]) / sigmas) ** 2) for path in paths
+        ])
+        indices, optimum, marginals = _chain_inference(unary, energy, sigmas)
+        np.testing.assert_array_equal(indices, paths[np.argmin(costs)])
+        self.assertAlmostEqual(optimum, costs.min())
+        weights = np.exp(-costs - logsumexp(-costs))
+        for j in range(3):
+            exact = [weights[paths[:, j] == i].sum() for i in range(3)]
+            np.testing.assert_allclose(marginals[:, j], exact, atol=1e-13)
+        np.testing.assert_array_equal(marginals[~np.isfinite(unary)], 0)
 
 
 class ExtractionTests(unittest.TestCase):
@@ -108,6 +126,45 @@ class ExtractionTests(unittest.TestCase):
             extract_band(self.data["intensity"], self.data["energy"][::-1], self.data["momentum"])
         with self.assertRaises(ValueError):
             extract_band(self.data["intensity"].T, self.data["energy"], self.data["momentum"])
+
+
+class MultiBandTests(unittest.TestCase):
+    def test_biased_guesses_recover_distinct_bands_with_missing_columns(self):
+        for count in (2, 3):
+            with self.subTest(bands=count):
+                data = simulate(ne=144, nk=70, bands=count, missing=True)
+                guess = data["initial_guess"]
+                np.testing.assert_array_equal(guess, approximate_dispersion(data["momentum"], count))
+                initial_rmse = np.sqrt(np.mean((guess - data["truth"])**2, axis=1))
+                self.assertTrue(np.all(initial_rmse > 0.01))
+                results = extract_bands(data["intensity"], data["energy"], data["momentum"], initial_guess=guess)
+                masks = band_search_masks(data["energy"], guess)
+                np.testing.assert_array_equal(masks.sum(axis=0), 1)
+                recovered = np.stack([r.band_energy for r in results])
+                self.assertTrue(np.all(np.diff(recovered, axis=0) > 0))
+                errors = np.sqrt(np.mean((recovered - data["truth"])**2, axis=1))
+                self.assertTrue(np.all(errors < 0.008), errors)
+                self.assertTrue(np.all(errors < initial_rmse / 2), (errors, initial_rmse))
+                for result, mask in zip(results, masks):
+                    self.assertEqual(np.sum(~result.observed), 4)
+                    np.testing.assert_allclose(result.marginals.sum(axis=0), 1)
+                    np.testing.assert_array_equal(result.marginals[~mask], 0)
+                    np.testing.assert_allclose(result.likelihood[:, ~result.observed], 1 / len(data["energy"]))
+
+    def test_invalid_band_guesses_and_anchor_indices(self):
+        data = simulate(ne=80, nk=30, bands=3)
+        guess = data["initial_guess"]
+        invalid = (guess[::-1], guess[:, :-1], guess[0], np.full_like(guess, np.nan),
+                   np.full_like(guess, -10), np.repeat(guess[:1], 3, axis=0), guess[:0])
+        for value in invalid:
+            with self.subTest(shape=value.shape), self.assertRaises(ValueError):
+                extract_bands(data["intensity"], data["energy"], data["momentum"], initial_guess=value)
+        for band in (-1, 3, 0.5, True):
+            with self.subTest(band=band), self.assertRaises(ValueError):
+                extract_bands(data["intensity"], data["energy"], data["momentum"], initial_guess=guess,
+                              anchors=[(band, 10, -0.3)])
+        with self.assertRaises(ValueError):
+            band_search_masks(np.array([-1., 1.]), np.array([[-0.5], [0.], [0.5]]))
 
 
 if __name__ == "__main__":

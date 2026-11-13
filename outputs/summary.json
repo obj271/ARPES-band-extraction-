@@ -1,0 +1,102 @@
+{
+  "method": "Gaussian nearest-neighbor MRF; exact discrete MAP within each band's search region",
+  "configuration": {
+    "eta_ev": 0.012,
+    "smoothing": [
+      0.7,
+      0.0
+    ],
+    "background_percentile": 10,
+    "likelihood_floor": 0.001,
+    "anchor_sigma_ev": 0.008,
+    "reference_sigma_ev": 0.04,
+    "command": "demo",
+    "reference": "independent approximate analytic dispersion",
+    "anchors": [],
+    "bands": 3,
+    "seed": 42,
+    "peak_counts": 12,
+    "missing": false,
+    "gamma_ev": 0.009
+  },
+  "band_count": 3,
+  "shape": [
+    192,
+    100
+  ],
+  "featureless_columns": 0,
+  "negative_log_posterior_up_to_constants": [
+    366.6896950845131,
+    371.9781931564704,
+    385.4374352663286
+  ],
+  "interval_note": "Pointwise model-conditional marginal intervals; not calibrated experimental errors.",
+  "initial_guess_role": "Gaussian reference prior and midpoint search partition; not an iterative optimizer seed",
+  "multiband_note": "Ordered noncrossing bands; independent exact chains conditional on reference regions; no automatic band count",
+  "truth_role": "Evaluation and plotting only; never passed to inference or used to define search regions",
+  "intensity_comparison": {
+    "curvature": "Positive part of negative 2D curvature; Cx=Cy=1",
+    "gradient": "Smoothed intensity / RMS of eight neighbor directional differences",
+    "coordinates": "Input axes divided by their median spacing (pixel-equivalent units)",
+    "smoothing_pixels": [
+      0.7,
+      0.0
+    ],
+    "gradient_floor_relative": 0.001,
+    "normalization": "Each enhanced map globally peak-normalized to [0, 1]; featureless columns zeroed",
+    "band_extraction": "Column maximum within the SAME midpoint search regions used for MAP; no continuity prior"
+  },
+  "simulation_metrics": {
+    "initial_guess_observed_rmse_mev": 14.844439857220207,
+    "initial_guess_rmse_mev": 14.844439857220207,
+    "map_observed_rmse_mev": 2.820388575737093,
+    "map_rmse_mev": 2.820388575737093,
+    "raw_argmax_observed_rmse_mev": 6.601188968983941,
+    "raw_argmax_rmse_mev": 6.60118896898394,
+    "curvature_observed_rmse_mev": 28.440869952040558,
+    "curvature_rmse_mev": 28.440869952040558,
+    "gradient_observed_rmse_mev": 26.17802533348009,
+    "gradient_rmse_mev": 26.17802533348009
+  },
+  "per_band_metrics": [
+    {
+      "band": 1,
+      "initial_guess_rmse_mev": 16.864711918733953,
+      "initial_guess_observed_rmse_mev": 16.864711918733953,
+      "map_rmse_mev": 2.7101783582676076,
+      "map_observed_rmse_mev": 2.7101783582676076,
+      "raw_argmax_rmse_mev": 4.25021390963438,
+      "raw_argmax_observed_rmse_mev": 4.25021390963438,
+      "curvature_rmse_mev": 32.287004926059595,
+      "curvature_observed_rmse_mev": 32.287004926059595,
+      "gradient_rmse_mev": 30.73878499044571,
+      "gradient_observed_rmse_mev": 30.73878499044571
+    },
+    {
+      "band": 2,
+      "initial_guess_rmse_mev": 13.006027546438236,
+      "initial_guess_observed_rmse_mev": 13.006027546438236,
+      "map_rmse_mev": 2.773167180707908,
+      "map_observed_rmse_mev": 2.773167180707908,
+      "raw_argmax_rmse_mev": 6.098523411600908,
+      "raw_argmax_observed_rmse_mev": 6.098523411600908,
+      "curvature_rmse_mev": 13.962414944319606,
+      "curvature_observed_rmse_mev": 13.962414944319606,
+      "gradient_rmse_mev": 24.071139855009612,
+      "gradient_observed_rmse_mev": 24.071139855009612
+    },
+    {
+      "band": 3,
+      "initial_guess_rmse_mev": 14.404753499566953,
+      "initial_guess_observed_rmse_mev": 14.404753499566953,
+      "map_rmse_mev": 2.9712374877594985,
+      "map_observed_rmse_mev": 2.9712374877594985,
+      "raw_argmax_rmse_mev": 8.687392090449919,
+      "raw_argmax_observed_rmse_mev": 8.687392090449919,
+      "curvature_rmse_mev": 34.48549742593101,
+      "curvature_observed_rmse_mev": 34.48549742593101,
+      "gradient_rmse_mev": 23.05589630599281,
+      "gradient_observed_rmse_mev": 23.05589630599281
+    }
+  ]
+}
